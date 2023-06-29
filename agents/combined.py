@@ -36,18 +36,23 @@ import tempfile
 def create_model(configuration):
     input_layer = Input(shape=(configuration['rows'], configuration['columns'], 1))
 
-    conv_vertical_a = Conv2D(filters=32, kernel_size=(configuration['inarow'], 1), padding='same', activation='swish')(input_layer)
+    conv_vertical_a = Conv2D(filters=32, kernel_size=(configuration['inarow'], 1), padding='same', activation='swish')(
+        input_layer)
     conv_vertical_b = Conv2D(filters=64, kernel_size=(configuration['rows'], 1), activation='swish')(conv_vertical_a)
     conv_vertical_c = Flatten()(conv_vertical_b)
 
-    conv_horizontal_a = Conv2D(filters=32, kernel_size=(1, configuration['inarow']), padding='same', activation='swish')(input_layer)
-    conv_horizontal_b = Conv2D(filters=64, kernel_size=(configuration['rows'], 1), activation='swish')(conv_horizontal_a)
+    conv_horizontal_a = Conv2D(filters=32, kernel_size=(1, configuration['inarow']), padding='same',
+                               activation='swish')(input_layer)
+    conv_horizontal_b = Conv2D(filters=64, kernel_size=(configuration['rows'], 1), activation='swish')(
+        conv_horizontal_a)
     conv_horizontal_c = Flatten()(conv_horizontal_b)
 
     assert configuration['inarow'] % 2 == 0, "inarow must be even, for square the convolution layer to work"
     half_inarow = int(configuration['inarow'] / 2)
-    conv_square_a = Conv2D(filters=32, kernel_size=(half_inarow, half_inarow), padding='same', activation='swish')(input_layer)
-    conv_square_b = Conv2D(filters=32, kernel_size=(half_inarow, half_inarow), padding='same', activation='swish')(conv_square_a)
+    conv_square_a = Conv2D(filters=32, kernel_size=(half_inarow, half_inarow), padding='same', activation='swish')(
+        input_layer)
+    conv_square_b = Conv2D(filters=32, kernel_size=(half_inarow, half_inarow), padding='same', activation='swish')(
+        conv_square_a)
     conv_square_c = Conv2D(filters=128, kernel_size=(configuration['rows'], 1), activation='swish')(conv_square_b)
     conv_square_d = Flatten()(conv_square_c)
 
@@ -64,9 +69,11 @@ def create_model(configuration):
     model.build((None, configuration['rows'], configuration['columns'], 1))
     return model
 
+
 class DqnWrapper:
     dqn_network = None
     model_weights_io = None
+
 
 from collections import defaultdict
 import copy
@@ -230,7 +237,8 @@ def brute_force_agent(observation, configuration):
     res, action = calc(context, matrix, mark)
     return res, action
 
-def deep_q_network_agent(observation, configuration):
+
+def combined_after_training_agent(observation, configuration):
     # Load the deep Q-network
     if DqnWrapper.dqn_network is None:
         DqnWrapper.dqn_network = create_model(configuration)
@@ -248,18 +256,17 @@ def deep_q_network_agent(observation, configuration):
         .reshape((1, configuration['rows'], configuration['columns'], 1)))[0]
 
     res_, action_ = brute_force_agent(observation, configuration)
-    # for i in range(configuration['rows']):
-    #     [print("X", end=" ") if observation['board'][i * configuration['columns'] + j] == observation.mark else print("O", end=" ") if observation['board'][i * configuration['columns'] + j] == 3 - observation.mark else print(".", end=" ") for j in range(configuration['columns'])]
-    #     print()
-    # print(res_, action_)
 
     if res_ == 1:
         return action_
-
 
     if res_ == 0:
         for i in range(configuration['columns']):
             if i not in action_:
                 action[i] = -1000000
+
+    for i in range(configuration['columns']):
+        if observation['board'][i] != 0:
+            action[i] = -1000000
 
     return int(np.argmax(action))

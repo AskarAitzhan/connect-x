@@ -22,6 +22,168 @@ from tabulate import tabulate
 
 from agents.brute_force_agent import brute_force_agent
 
+from collections import defaultdict
+import copy
+
+
+class Context:
+    n = None
+    m = None
+    inrow = None
+    used = None
+    res = None
+
+    def __init__(self, n, m, inrow, used, res):
+        self.n = n
+        self.m = m
+        self.inrow = inrow
+        self.used = used
+        self.res = res
+
+
+# Turns the list of cells into a matrix of a given size
+def to_matrix(context, board):
+    matrix = []
+    for i in range(context.n):
+        row = []
+        for j in range(context.m):
+            index = i * context.m + j
+            row.append(board[index])
+        matrix.append(row)
+    return matrix
+
+
+# Encodes the board into a unique number
+def encode_matrix(matrix):
+    matrix_hash = 0
+    for row in matrix:
+        for cell in row:
+            matrix_hash = matrix_hash * 3 + cell
+    return matrix_hash
+
+
+def in_row_horizontal(context, matrix, x, y):
+    for i in range(context.inrow):
+        if y + i >= context.m or matrix[x][y] != matrix[x][y + i]:
+            return False
+    return True
+
+
+def in_row_vertical(context, matrix, x, y):
+    for i in range(context.inrow):
+        if x + i >= context.n or matrix[x][y] != matrix[x + i][y]:
+            return False
+    return True
+
+
+def in_row_right_diagonal(context, matrix, x, y):
+    for i in range(context.inrow):
+        if x + i >= context.n or y + i >= context.m or matrix[x][y] != matrix[x + i][y + i]:
+            return False
+    return True
+
+
+def in_row_left_diagonal(context, matrix, x, y):
+    for i in range(context.inrow):
+        if x + i >= context.n or y - i < 0 or matrix[x][y] != matrix[x + i][y - i]:
+            return False
+    return True
+
+
+# Checks if the game is finished
+def is_game_finished(context, matrix):
+    for i in range(context.n):
+        for j in range(context.m):
+            if matrix[i][j] == 0:
+                continue
+            if in_row_horizontal(context, matrix, i, j):
+                return True
+            if in_row_vertical(context, matrix, i, j):
+                return True
+            if in_row_right_diagonal(context, matrix, i, j):
+                return True
+            if in_row_left_diagonal(context, matrix, i, j):
+                return True
+    return False
+
+
+# Generates a new matrix where the current move is applied
+def get_next_matrix(context, matrix, col_index, mark):
+    row_index = 0
+    while row_index + 1 < context.n and matrix[row_index + 1][col_index] == 0:
+        row_index += 1
+    result = copy.deepcopy(matrix)
+    result[row_index][col_index] = mark
+    return result
+
+
+# Calculates the winning and losing moves for the current state
+def calc(context, matrix, mark, depth=1):
+    if depth > 5:
+        return 0, None
+
+    matrix_hash = encode_matrix(matrix)
+
+    if context.used[matrix_hash]:
+        return context.res[matrix_hash]
+    context.used[matrix_hash] = True
+
+    is_all_losing = True
+    no_valid_move = True
+    non_losing_moves = []
+
+    best_action = None
+    for i in range(context.m):
+        if matrix[0][i] != 0:
+            continue
+        else:
+            no_valid_move = False
+            if best_action is None:
+                best_action = i
+
+        next_matrix = get_next_matrix(context, matrix, i, mark)
+        # If the game is finished, then we won
+        if is_game_finished(context, next_matrix):
+            context.res[matrix_hash] = (1, i)
+            return context.res[matrix_hash]
+
+        opponent_res, opponent_action = calc(context, next_matrix, 3 - mark, depth + 1)
+        # If the opponent loses in all cases, then we'll take that move.
+        if opponent_res == -1:
+            context.res[matrix_hash] = (1, i)
+            return context.res[matrix_hash]
+
+        # If we found a neutral move for the opponent, then we'll take it as a neutral move for us
+        if opponent_res == 0:
+            is_all_losing = False
+            non_losing_moves.append(i)
+
+    if no_valid_move:
+        context.res[matrix_hash] = (0, None)
+    elif is_all_losing:
+        context.res[matrix_hash] = (-1, None)
+    else:
+        context.res[matrix_hash] = (0, non_losing_moves)
+
+    return context.res[matrix_hash]
+
+
+# This agent looks 6 steps forward and chooses the step that leads to the winning, or NOT losing position
+def brute_force_agent(observation, configuration):
+    context = Context(
+        n=configuration.rows,
+        m=configuration.columns,
+        inrow=configuration.inarow,
+        used=defaultdict(lambda: False),
+        res=defaultdict(lambda: (0, 0)))
+
+    board = observation['board']
+    matrix = to_matrix(context, board)
+    mark = observation.mark
+
+    res, action = calc(context, matrix, mark)
+    return res, action
+
 
 class DQN:
     def __init__(self, env, epsilon=1.0, epsilon_decay=0.995, epsilon_min=0.01, gamma=0.95, tau=0.001,
@@ -58,22 +220,14 @@ class DQN:
     def create_model(self):
         input_layer = Input(shape=(self.rows, self.columns, 1))
 
-        conv_vertical_a = Conv2D(filters=32, kernel_size=(self.inarow, 1), padding='same', activation='swish')(input_layer)
-        conv_vertical_b = Conv2D(filters=64, kernel_size=(self.rows, 1), activation='swish')(conv_vertical_a)
-        conv_vertical_c = Flatten()(conv_vertical_b)
-
-        conv_horizontal_a = Conv2D(filters=32, kernel_size=(1, self.inarow), padding='same', activation='swish')(input_layer)
-        conv_horizontal_b = Conv2D(filters=64, kernel_size=(self.rows, 1), activation='swish')(conv_horizontal_a)
-        conv_horizontal_c = Flatten()(conv_horizontal_b)
-
         assert self.inarow % 2 == 0, "inarow must be even, for square the convolution layer to work"
         half_inarow = int(self.inarow / 2)
-        conv_square_a = Conv2D(filters=32, kernel_size=(half_inarow, half_inarow), padding='same', activation='swish')(input_layer)
-        conv_square_b = Conv2D(filters=32, kernel_size=(half_inarow, half_inarow), padding='same', activation='swish')(conv_square_a)
-        conv_square_c = Conv2D(filters=128, kernel_size=(self.rows, 1), activation='swish')(conv_square_b)
+        conv_square_a = Conv2D(filters=32, kernel_size=(half_inarow + 1, half_inarow + 1), padding='same', activation='swish')(input_layer)
+        conv_square_b = Conv2D(filters=64, kernel_size=(half_inarow + 1, half_inarow + 1), padding='same', activation='swish')(conv_square_a)
+        conv_square_c = Conv2D(filters=128, kernel_size=(self.rows, self.columns), activation='swish')(conv_square_b)
         conv_square_d = Flatten()(conv_square_c)
 
-        merged = Concatenate()([conv_vertical_c, conv_horizontal_c, conv_square_d])
+        merged = Dense(128, activation='swish')(conv_square_d)
 
         value_layer = Dense(self.columns, activation='linear')(merged)
         advantage_layer = Dense(self.columns, activation='linear')(merged)
@@ -168,10 +322,21 @@ class DQN:
         print("________________________")
 
     def act(self, observation, configuration):
-        if np.random.rand() <= self.epsilon:
-            return int(np.random.choice(np.arange(configuration.columns)))
+        res, action = brute_force_agent(observation, configuration)
+        if res == 1:
+            return action
 
         act_values = self.target(self.extract_state(observation))[0]
+
+        if res == 0:
+            for i in range(len(act_values)):
+                if i not in action:
+                    act_values[i] = -1000
+
+        for i in range(len(act_values)):
+            if observation['board'][i] != 0:
+                act_values[i] = -1000
+
         probs = softmax(act_values)
         chosen_index = np.random.choice(np.arange(len(act_values)), p=probs)
         return int(chosen_index)
@@ -181,6 +346,13 @@ class DQN:
         for i, val in enumerate(act_values):
             if observation['board'][i] != 0:
                 act_values[i] = -1000
+        res, action = brute_force_agent(observation, configuration)
+        if res == 1:
+            return action
+        if res == 0:
+            for i in range(len(act_values)):
+                if i not in action:
+                    act_values[i] = -1000
         return int(np.argmax(act_values))
 
     def train(self, episodes):
@@ -191,7 +363,7 @@ class DQN:
     def init_episode(self, episode):
         print("Initializing episode #{} ...".format(episode))
         if episode % self.render_frequency == 0:
-            self.render(self.agent, "dqn{}.html".format(episode))
+            self.render(self.agent, "dqn.html")
             print("--------------------")
             print("--------------------")
             print("Episode finished with reward = {}".format(np.mean(np.array(self.reward_per_episode[-self.render_frequency:]))))
