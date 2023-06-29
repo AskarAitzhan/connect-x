@@ -152,7 +152,7 @@ def brute_force_agent(observation, configuration):
         used=defaultdict(lambda: False),
         res=defaultdict(lambda: (0, 0)))
 
-    board = observation.board
+    board = observation['board']
     matrix = to_matrix(context, board)
     mark = observation.mark
 
